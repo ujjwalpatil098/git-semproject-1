@@ -1,2 +1,1 @@
-print("Sem project git testing")
-print("Working",12345)
+print("Switched to new branch")
