@@ -125,7 +125,6 @@ The final project will provide an interactive **Streamlit dashboard**.
 | 🐼 Pandas       | Data cleaning and manipulation    |
 | 🔢 NumPy        | Numerical operations              |
 | 📊 Matplotlib   | Data visualization                |
-| 🎨 Seaborn      | Statistical visualization         |
 | 🖥️ Streamlit   | Interactive dashboard             |
 | 🗄️ SQL         | Data storage/query integration    |
 | 🔧 Git & GitHub | Version control and collaboration |
