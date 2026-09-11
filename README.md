@@ -295,3 +295,4 @@ This project is created for **educational and academic purposes**.
   <br>
   Turning raw electricity data into meaningful insights.
 </p>
+print("Hello, World!")
