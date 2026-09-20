@@ -1,4 +1,4 @@
-# ⚡ Electricity Consumption Analysis Dashboard
+# ⚡📈 Electricity Consumption Analysis Dashboard
 
 > **A data-driven dashboard for analyzing and visualizing household electricity consumption patterns.**
 
