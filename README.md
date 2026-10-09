@@ -25,7 +25,7 @@ The final goal is to provide an easy-to-understand dashboard where users can exp
 ## 🎯 Project Objectives
 
 * 🧹 Clean and preprocess raw electricity consumption data.
-* 📊 Analyze electricity usage patterns over time.
+* 📊 Analyze electricity usage patterns over time. 
 * 🔍 Identify important trends and variations in consumption.
 * 📈 Create meaningful visualizations from the processed data.
 * 🎛️ Develop an interactive dashboard for easier exploration.
