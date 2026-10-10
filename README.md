@@ -267,8 +267,8 @@ Current progress:
 * [x] Dataset loading
 * [x] Initial data inspection
 * [x] Data preprocessing
-* [ ] Exploratory Data Analysis
-* [ ] Data visualization
+* [x] Exploratory Data Analysis
+* [x] Data visualization
 * [ ] SQL integration
 * [ ] Streamlit dashboard
 * [ ] Final testing
