@@ -82,7 +82,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-DATA_FILE = Path("cleaned_electricity_data.csv")
+DATA_FILE = Path("sample_electricity_data.csv")
 
 st.markdown("""
 <style>
