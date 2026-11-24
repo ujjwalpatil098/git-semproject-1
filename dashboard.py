@@ -2,6 +2,7 @@ from pathlib import Path
 from io import BytesIO
 from datetime import datetime, date, timedelta
 
+import duckdb
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -1609,65 +1610,309 @@ elif page == "upload":
         st.info(f"Active Session is using the default project dataset: **{DATA_FILE.name}** ({len(df):,} records).")
 
 # =========================================================
-# 7. SQL ANALYTICS (CONNECTED TO SQLITE)
+# 7. SQL ANALYTICS (DUCKDB + SQLITE ACTION LOG)
 # =========================================================
 elif page == "sql":
-    st.markdown('<div class="watt-kicker">▤ DATA STRUCTURE / LIVE SQL QUERY ENGINE</div>', unsafe_allow_html=True)
+
+    st.markdown(
+        '<div class="watt-kicker">▤ DATABASE / LIVE SQL INSIGHTS</div>',
+        unsafe_allow_html=True,
+    )
     st.title("SQL Analytics")
     st.write(
-        "Execute live, read-only SQL queries directly against the `electricity.db` SQLite database "
-        "(containing 2,049,280 electricity records and persistent energy-saving action logs)."
+        "Run SQL analytics on the currently active electricity dataset "
+        "using DuckDB. Uploaded CSV files are automatically reflected."
     )
 
-    query_templates = {
-        "Monthly Consumption & Peak Power": """SELECT strftime('%Y-%m', Datetime) AS month,
-       ROUND(SUM(Global_active_power) / 60, 2) AS total_kwh,
-       ROUND(AVG(Global_active_power), 3) AS avg_power_kw,
-       ROUND(MAX(Global_active_power), 3) AS peak_power_kw,
-       COUNT(*) AS reading_count
-FROM electricity_data
-GROUP BY strftime('%Y-%m', Datetime)
-ORDER BY month DESC;""",
+    # Identify the active dataset so old results are not displayed
+    # after switching to another CSV.
+    dataset_signature = (
+        data_source,
+        len(df),
+        str(start_date),
+        str(end_date),
+        st.session_state.get("wattwise_upload_version", 0),
+    )
 
-        "Top 10 Peak Consumption Hours": """SELECT Date, Hour,
-       ROUND(SUM(Global_active_power) / 60, 2) AS hour_kwh,
-       ROUND(MAX(Global_active_power), 2) AS max_kw
-FROM electricity_data
-GROUP BY Date, Hour
-ORDER BY hour_kwh DESC
-LIMIT 10;""",
+    if st.session_state.get("wattwise_sql_result_dataset") != dataset_signature:
+        st.session_state.pop("wattwise_sql_result", None)
+        st.session_state.pop("wattwise_sql_result_name", None)
+        st.session_state.pop("wattwise_sql_result_dataset", None)
 
-        "Sub-metering Energy Breakdown": """SELECT ROUND(SUM(Sub_metering_1) / 1000, 2) AS kitchen_kwh,
-       ROUND(SUM(Sub_metering_2) / 1000, 2) AS laundry_kwh,
-       ROUND(SUM(Sub_metering_3) / 1000, 2) AS climate_water_kwh,
-       ROUND(SUM(Global_active_power) / 60, 2) AS total_kwh
-FROM electricity_data;""",
+    queries = {
+        "Daily consumption": """
+            SELECT
+                CAST(reading_datetime AS DATE) AS usage_date,
+                COUNT(*) AS readings,
+                ROUND(SUM(Global_active_power) / 60.0, 2)
+                    AS observed_consumption_kwh,
+                ROUND(AVG(Global_active_power), 3) AS average_power_kw,
+                ROUND(MAX(Global_active_power), 3) AS peak_power_kw
+            FROM electricity_consumption
+            GROUP BY CAST(reading_datetime AS DATE)
+            ORDER BY usage_date
+        """,
 
-        "Energy-Saving Actions Log": """SELECT id, action_name, action_category, action_date,
-       baseline_days, followup_days, tariff_inr, created_at
-FROM energy_saving_actions
-ORDER BY id DESC;""",
+        "Monthly consumption": """
+            SELECT
+                STRFTIME(reading_datetime, '%Y-%m') AS usage_month,
+                COUNT(*) AS readings,
+                ROUND(SUM(Global_active_power) / 60.0, 2)
+                    AS observed_consumption_kwh,
+                ROUND(AVG(Global_active_power), 3) AS average_power_kw
+            FROM electricity_consumption
+            GROUP BY STRFTIME(reading_datetime, '%Y-%m')
+            ORDER BY usage_month
+        """,
 
-        "Custom Query": "SELECT * FROM electricity_data LIMIT 25;",
+        "Hourly usage pattern": """
+            SELECT
+                HOUR(reading_datetime) AS hour_of_day,
+                COUNT(*) AS readings,
+                ROUND(AVG(Global_active_power), 3) AS average_power_kw,
+                ROUND(MAX(Global_active_power), 3) AS peak_power_kw
+            FROM electricity_consumption
+            GROUP BY HOUR(reading_datetime)
+            ORDER BY hour_of_day
+        """,
+
+        "Weekday comparison": """
+            SELECT
+                DAYNAME(reading_datetime) AS weekday,
+                COUNT(*) AS readings,
+                ROUND(AVG(Global_active_power), 3) AS average_power_kw,
+                ROUND(MAX(Global_active_power), 3) AS peak_power_kw
+            FROM electricity_consumption
+            GROUP BY DAYOFWEEK(reading_datetime), DAYNAME(reading_datetime)
+            ORDER BY DAYOFWEEK(reading_datetime)
+        """,
+
+        "Sub-meter contribution": """
+            SELECT
+                ROUND(SUM(Sub_metering_1) / 1000.0, 2) AS kitchen_kwh,
+                ROUND(SUM(Sub_metering_2) / 1000.0, 2) AS laundry_kwh,
+                ROUND(SUM(Sub_metering_3) / 1000.0, 2) AS water_heater_ac_kwh
+            FROM electricity_consumption
+        """,
+
+        "Highest power readings": """
+            SELECT
+                reading_datetime,
+                ROUND(Global_active_power, 3) AS active_power_kw,
+                ROUND(Global_intensity, 2) AS intensity_amp,
+                ROUND(Voltage, 2) AS voltage
+            FROM electricity_consumption
+            ORDER BY Global_active_power DESC
+            LIMIT 20
+        """,
     }
 
-    selected_template = st.selectbox("Select SQL Query Template", list(query_templates.keys()))
-    sql_text = st.text_area("SQL Statement (Read-only SELECT queries)", value=query_templates[selected_template], height=160)
+    descriptions = {
+        "Daily consumption": "Compare estimated electricity consumption across individual dates.",
+        "Monthly consumption": "Compare electricity consumption across months.",
+        "Hourly usage pattern": "Identify hours with higher average or peak power.",
+        "Weekday comparison": "Compare recorded power across weekdays.",
+        "Sub-meter contribution": "Compare the three recorded sub-meter totals.",
+        "Highest power readings": "Inspect the 20 readings with the highest active power.",
+        "Energy-Saving Actions Log": "View saved energy-saving interventions from the SQLite application database.",
+    }
 
-    if st.button("Execute SQL Query", type="primary"):
+    # The action log remains in SQLite. Electricity analytics use DuckDB.
+    analysis_options = list(queries.keys()) + ["Energy-Saving Actions Log"]
+
+    analysis_name = st.selectbox(
+        "Select an analysis",
+        analysis_options,
+        key="wattwise_sql_analysis",
+    )
+
+    st.markdown(
+        f'<div class="small-card"><h4>{analysis_name}</h4>'
+        f'<p>{descriptions[analysis_name]}</p></div>',
+        unsafe_allow_html=True,
+    )
+
+    st.caption(
+        f"Active dataset: {data_source} · {len(df):,} records"
+    )
+
+    if analysis_name != "Energy-Saving Actions Log":
+        st.info(
+            "DuckDB runs these queries on the active Pandas dataset in memory. "
+            "It does not modify the SQLite application database."
+        )
+    else:
+        st.info(
+            "This report reads saved action records from SQLite. "
+            "User-level access permissions are preserved."
+        )
+
+    if st.button(
+        "▶ Run SQL query",
+        type="primary",
+        key="wattwise_run_sql",
+    ):
         try:
-            with st.spinner("Executing query against SQLite database…"):
-                result_df = run_readonly_query(sql_text)
-            st.success(f"Query returned {len(result_df):,} row(s) successfully.")
-            st.dataframe(result_df, use_container_width=True, hide_index=True)
-            st.download_button(
-                "↓ Export SQL Result (Excel)",
-                make_excel_bytes(result_df),
-                "sql_query_result.xlsx",
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            with st.spinner("Executing query..."):
+
+                if analysis_name == "Energy-Saving Actions Log":
+
+                    # Preserve the existing user/admin access filtering.
+                    action_records = get_all_saving_actions(
+                        user_id=current_user["id"],
+                        role=current_user["role"],
+                    )
+
+                    result = pd.DataFrame(action_records)
+
+                    st.session_state["wattwise_sql_result"] = result
+                    st.session_state["wattwise_sql_result_name"] = analysis_name
+                    st.session_state["wattwise_sql_result_dataset"] = dataset_signature
+
+                else:
+                    required_columns = [
+                        "DateTime",
+                        "Global_active_power",
+                        "Global_intensity",
+                        "Voltage",
+                        "Sub_metering_1",
+                        "Sub_metering_2",
+                        "Sub_metering_3",
+                    ]
+
+                    missing_columns = [
+                        col for col in required_columns
+                        if col not in df.columns
+                    ]
+
+                    if missing_columns:
+                        raise ValueError(
+                            "Missing required columns: "
+                            + ", ".join(missing_columns)
+                        )
+
+                    # Only copy the columns needed for SQL analytics.
+                    sql_df = df[required_columns].copy()
+
+                    sql_df = sql_df.rename(
+                        columns={"DateTime": "reading_datetime"}
+                    )
+
+                    # Create an in-memory DuckDB connection.
+                    with duckdb.connect(database=":memory:") as sql_connection:
+
+                        # Register the active DataFrame as a SQL table.
+                        sql_connection.register(
+                            "electricity_consumption",
+                            sql_df,
+                        )
+
+                        result = sql_connection.execute(
+                            queries[analysis_name]
+                        ).df()
+
+                    st.session_state["wattwise_sql_result"] = result
+                    st.session_state["wattwise_sql_result_name"] = analysis_name
+                    st.session_state["wattwise_sql_result_dataset"] = dataset_signature
+
+            st.success(
+                f"Query completed successfully: {len(result):,} row(s) returned."
             )
+
         except Exception as exc:
-            st.error(f"SQL execution error: {exc}")
+            st.session_state.pop("wattwise_sql_result", None)
+            st.session_state.pop("wattwise_sql_result_name", None)
+            st.session_state.pop("wattwise_sql_result_dataset", None)
+
+            st.error("SQL Analytics encountered an error.")
+            st.code(f"{type(exc).__name__}: {exc}")
+
+    # Display the stored result.
+    result = st.session_state.get("wattwise_sql_result")
+    result_name = st.session_state.get("wattwise_sql_result_name")
+
+    if result is not None and result_name is not None:
+        st.markdown("---")
+        st.markdown(f"### ▥ {result_name} — Results")
+        st.caption(f"{len(result):,} result rows returned")
+
+        if result.empty:
+            st.info("No records found.")
+        else:
+            st.dataframe(
+                result,
+                use_container_width=True,
+                hide_index=True,
+            )
+
+            # Visual exploration for numeric DuckDB query results.
+            numeric_columns = result.select_dtypes(
+                include="number"
+            ).columns.tolist()
+
+            if (
+                result_name != "Energy-Saving Actions Log"
+                and len(result) > 1
+                and numeric_columns
+            ):
+                st.markdown("#### Visual exploration")
+
+                x_column, y_column = st.columns(2)
+
+                with x_column:
+                    selected_x = st.selectbox(
+                        "Horizontal axis",
+                        result.columns.tolist(),
+                        key="wattwise_sql_x",
+                    )
+
+                with y_column:
+                    selected_y = st.selectbox(
+                        "Metric",
+                        numeric_columns,
+                        key="wattwise_sql_y",
+                    )
+
+                chart_data = result.copy()
+
+                if pd.api.types.is_datetime64_any_dtype(
+                    chart_data[selected_x]
+                ):
+                    chart_data[selected_x] = chart_data[selected_x].astype(str)
+
+                fig = px.bar(
+                    chart_data,
+                    x=selected_x,
+                    y=selected_y,
+                    template=CHART_TEMPLATE,
+                    color_discrete_sequence=[CHART_COLORS[0]],
+                    title=selected_y.replace("_", " ").title(),
+                )
+
+                st.plotly_chart(
+                    polish(fig, 370),
+                    use_container_width=True,
+                )
+
+            st.download_button(
+                "↓ Download query results (Excel)",
+                data=make_excel_bytes(
+                    result,
+                    date_columns=["usage_date", "reading_datetime"],
+                ),
+                file_name="wattwise_sql_results.xlsx",
+                mime=(
+                    "application/vnd.openxmlformats-officedocument."
+                    "spreadsheetml.sheet"
+                ),
+                key="wattwise_sql_download",
+            )
+
+    st.markdown("---")
+    st.caption(
+        "Electricity analytics use DuckDB with the active CSV in memory. "
+        "Energy-saving action records remain stored in SQLite."
+    )
 
 # =========================================================
 # 8. ADMIN CONSOLE (AUTHENTICATION & RBAC MANAGEMENT)
